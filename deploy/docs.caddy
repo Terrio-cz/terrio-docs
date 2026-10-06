@@ -8,6 +8,9 @@
 		X-Frame-Options DENY
 		Permissions-Policy "camera=(), microphone=(), geolocation=()"
 		-Server
+		# Default only: hashed /_astro/ files and /version.txt set their own. Without it Cloudflare adds a 4 h TTL to
+		# static extensions, 404s and the unhashed /pagefind/ index included.
+		?Cache-Control no-cache
 	}
 }
 

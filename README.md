@@ -58,23 +58,25 @@ ssh ubuntu@<vps-host> 'sudo install -m 644 /tmp/docs.caddy /etc/caddy/sites/ && 
 - Caddy serves `/srv/terrio-docs/current/dist` by the importer's deploy contract (`docs/README.md`, reference
   `docs-site/deploy/nginx.conf`): section paths without a trailing slash 301 to a relative `Location`, unknown paths 404
   with the Czech or (below `/en/`) English 404 page, existing `/_astro/*` files cached for a year (`immutable`; a 404 there
-  is not cached), `/version.txt` `no-store`, gzip/zstd, `nosniff`, `Referrer-Policy`, `X-Frame-Options: DENY`,
+  is not cached), `/version.txt` `no-store`, everything else `no-cache` (so Cloudflare adds no TTL of its own), gzip/zstd, `nosniff`, `Referrer-Policy`, `X-Frame-Options: DENY`,
   `Permissions-Policy` on every response, 404 pages included.
 - `/` and `/en/` 302 to `https://terrio.cz/`: the site title and the shared navigation (`/#data`, `/#cenik`, ...) point
   at the website root, which the landing page owns; the landing page has no English version yet.
+- Cloudflare zone setting: Browser Cache TTL must respect the origin (a Cache Rule for `docs.terrio.cz`: Browser TTL
+  "Respect origin"); with the zone default it raises `no-cache` on static extensions (`.js`, `.css`, 404s of them, the
+  `/pagefind/` index) to 4 hours.
 - `http://127.0.0.1:8791` serves the same site on loopback only, so the deploy check needs neither DNS nor the certificate.
 
 ## Rollback
 
-Revert the pin commit on `main` (the deploy builds the older importer commit; the trigger moves the pin forward again only
-when the site changes after it), or at once on the VPS:
+Revert the pin commit on `main` (the deploy builds the older importer commit), or at once on the VPS. Either way the next
+importer master push moves the pin forward again, because the trigger compares master with the pin; to hold a rollback,
+fix master first.
 
 ```bash
 ssh ubuntu@<vps-host> 'ls -1t /srv/terrio-docs/releases'
 ssh ubuntu@<vps-host> 'sudo terrio-docs-deploy --rollback <sha>'
 ```
-
-The next pin deploys again.
 
 ## Keys
 
