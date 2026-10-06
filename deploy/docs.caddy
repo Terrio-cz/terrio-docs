@@ -1,0 +1,63 @@
+# /etc/caddy/sites/docs.caddy on the VPS (README.md of Terrio-cz/terrio-docs): docs.terrio.cz behind Cloudflare, the deploy
+# contract of the importer's docs-site/deploy/nginx.conf (importer docs/README.md) on Caddy. The loopback listener lets terrio-docs-deploy check a release
+# without depending on DNS or the certificate.
+(terrio_docs_headers) {
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		X-Frame-Options DENY
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+}
+
+(terrio_docs) {
+	root * /srv/terrio-docs/current/dist
+	encode zstd gzip
+	import terrio_docs_headers
+	# Only existing files: a cached 404 of a hashed chunk would outlive a rollback and the fix-forward after it.
+	@assets {
+		path /_astro/*
+		file
+	}
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+	# Read by the deploy checks; never cached by Cloudflare.
+	header /version.txt Cache-Control "no-store"
+
+	# The site title and the shared navigation (/#data, /#cenik, ...) point at the website root, which terrio.cz owns;
+	# the landing page has no English version yet.
+	redir / https://terrio.cz/ 302
+	redir /en/ https://terrio.cz/ 302
+	# Relative Location, so scheme and host stay the proxy's.
+	redir /docs /docs/ 301
+	redir /en/docs /en/docs/ 301
+	redir /changelog /changelog/ 301
+	redir /en/changelog /en/changelog/ 301
+
+	handle {
+		try_files {path} {path}/index.html
+		file_server
+	}
+
+	handle_errors 404 {
+		import terrio_docs_headers
+		@en path /en/*
+		handle @en {
+			rewrite * /en/404/index.html
+			file_server
+		}
+		handle {
+			rewrite * /404.html
+			file_server
+		}
+	}
+}
+
+docs.terrio.cz {
+	import terrio_docs
+}
+
+http://127.0.0.1:8791 {
+	bind 127.0.0.1
+	import terrio_docs
+}

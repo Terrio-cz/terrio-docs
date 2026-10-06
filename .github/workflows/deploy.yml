@@ -1,0 +1,91 @@
+name: Deploy
+
+# Builds docs-site/ of Terrio-cz/importer at the commit pinned in IMPORTER_SHA and hands it to the VPS behind
+# docs.terrio.cz (README.md). The importer bumps IMPORTER_SHA on every push to its master (workflow docs-trigger.yml),
+# so every landed merge, and the changelog it changes, goes live. The VPS deploy key can only run terrio-docs-deploy with
+# that sha; the VPS keeps the release only when Caddy serves it, else switches back.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    # workflow_dispatch can pick any branch; only main goes live.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Read the pinned importer commit
+        id: pin
+        run: |
+          sha=$(tr -d '[:space:]' < IMPORTER_SHA)
+          [[ $sha =~ ^[0-9a-f]{40}$ ]] || { echo "IMPORTER_SHA is not a 40-hex sha" >&2; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        with:
+          repository: Terrio-cz/importer
+          ref: ${{ steps.pin.outputs.sha }}
+          path: importer
+          ssh-key: ${{ secrets.IMPORTER_READ_KEY }}
+          persist-credentials: false
+          # The changelog is generated from release tags and the whole history (importer docs/README.md, Changelog).
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: importer/docs-site/.nvmrc
+          cache: npm
+          cache-dependency-path: importer/docs-site/package-lock.json
+
+      # Same steps as the importer's docs-site.yml check; Docker on the runner runs the pinned oasdiff image.
+      - name: Build and check the site
+        working-directory: importer/docs-site
+        run: |
+          npm ci
+          npm run changelog:collect
+          npm run check
+
+      - name: Pack the release
+        working-directory: importer/docs-site
+        env:
+          SHA: ${{ steps.pin.outputs.sha }}
+        run: |
+          echo "$SHA" > dist/version.txt
+          tar czf "$RUNNER_TEMP/docs-release.tgz" dist
+
+      - name: Ship to the VPS
+        env:
+          DEPLOY_KEY: ${{ secrets.VPS_DEPLOY_KEY }}
+          KNOWN_HOSTS: ${{ vars.VPS_KNOWN_HOSTS }}
+          SHA: ${{ steps.pin.outputs.sha }}
+        run: |
+          key="$RUNNER_TEMP/vps_deploy_key"
+          trap 'rm -f "$key" "$RUNNER_TEMP/known_hosts" "$RUNNER_TEMP/docs-release.tgz"' EXIT
+          (umask 077; printf '%s\n' "$DEPLOY_KEY" > "$key")
+          printf '%s\n' "$KNOWN_HOSTS" > "$RUNNER_TEMP/known_hosts"
+          ssh -i "$key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts" \
+            docs-deploy@<vps-host> "$SHA" < "$RUNNER_TEMP/docs-release.tgz"
+
+      - name: Check docs.terrio.cz
+        env:
+          SHA: ${{ steps.pin.outputs.sha }}
+        run: |
+          for i in $(seq 1 10); do
+            [[ $(curl -fsS "https://docs.terrio.cz/version.txt?run=$GITHUB_RUN_ID-$i" || true) == "$SHA" ]] && exit 0
+            sleep 3
+          done
+          echo "docs.terrio.cz does not serve $SHA" >&2; exit 1

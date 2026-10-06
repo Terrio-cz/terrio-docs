@@ -1,0 +1,100 @@
+#!/bin/bash
+# /usr/local/sbin/terrio-docs-deploy <40-hex sha> < release.tgz   (root, via sudo from terrio-docs-deploy-entry)
+# Unpacks a docs-site release (dist/ only), switches /srv/terrio-docs/current to it and switches back when Caddy does
+# not serve it. Keeps the five newest releases and the live one.
+# Rollback by hand: terrio-docs-deploy --rollback <sha of a kept release>
+set -euo pipefail
+umask 022
+
+ROOT=/srv/terrio-docs
+RELEASES=$ROOT/releases
+MAX_BYTES=$((200 * 1024 * 1024))
+# Unpacked limits, so a small archive cannot fill the disk the runner and terrio.cz share.
+MAX_UNPACKED=$((1024 * 1024 * 1024))
+MAX_ENTRIES=50000
+CHECK=http://127.0.0.1:8791
+
+die() { echo "deploy: $*" >&2; exit 1; }
+
+# One deploy or rollback at a time.
+exec 9>/run/terrio-docs-deploy.lock
+flock -n 9 || die "another deploy is running"
+
+switch_to() {
+  ln -sfn "$RELEASES/$1" "$ROOT/current.tmp"
+  mv -Tf "$ROOT/current.tmp" "$ROOT/current"
+}
+
+# Caddy serves this release (version.txt carries the sha) and both language entry pages.
+healthy() {
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if [[ $(curl -s "$CHECK/version.txt" || true) == "$1" ]] \
+        && [[ $(curl -s -o /dev/null -w '%{http_code}' "$CHECK/docs/" || true) == 200 ]] \
+        && [[ $(curl -s -o /dev/null -w '%{http_code}' "$CHECK/en/docs/" || true) == 200 ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+activate() {
+  local sha=$1 previous=$2
+  switch_to "$sha"
+  if healthy "$sha"; then
+    echo "deploy: live $sha"
+    return 0
+  fi
+  echo "deploy: $sha failed, back to ${previous:-nothing}" >&2
+  [[ -n $previous ]] && switch_to "$previous"
+  return 1
+}
+
+install -d -m 755 "$RELEASES"
+previous=$(basename "$(readlink -f "$ROOT/current" 2>/dev/null || true)")
+[[ $previous =~ ^[0-9a-f]{40}$ && -d $RELEASES/$previous ]] || previous=
+
+if [[ ${1:-} == --rollback ]]; then
+  sha=${2:-}
+  [[ $sha =~ ^[0-9a-f]{40}$ && -d $RELEASES/$sha ]] || die "no kept release ${sha:-<none>}"
+  activate "$sha" "$previous"
+  exit
+fi
+
+sha=${1:-}
+[[ $sha =~ ^[0-9a-f]{40}$ ]] || die "expected a 40-hex commit sha"
+# A re-run of the live commit must not delete the directory that is being served.
+if [[ $sha == "$previous" ]]; then cat >/dev/null; echo "deploy: $sha already live"; exit 0; fi
+
+tmp=$(mktemp -d "$RELEASES/.incoming.XXXXXX")
+trap 'rm -rf "$tmp"' EXIT
+head -c $((MAX_BYTES + 1)) > "$tmp/release.tgz"
+(( $(stat -c %s "$tmp/release.tgz") <= MAX_BYTES )) || die "release larger than $MAX_BYTES bytes"
+
+# Only regular files and directories, all below dist/.
+listing=$(tar -tvzf "$tmp/release.tgz" --numeric-owner) || die "not a gzip tar archive"
+if awk '{print substr($1,1,1)}' <<<"$listing" | grep -qv '^[-d]$'; then die "links or devices in the release"; fi
+(( $(wc -l <<<"$listing") <= MAX_ENTRIES )) || die "more than $MAX_ENTRIES entries in the release"
+(( $(awk '{s += $3} END {printf "%d", s}' <<<"$listing") <= MAX_UNPACKED )) || die "release unpacks to more than $MAX_UNPACKED bytes"
+names=$(tar -tzf "$tmp/release.tgz")
+if grep -Eqv '^(\./)?dist(/|$)' <<<"$names" || grep -Eq '(^|/)\.\.(/|$)' <<<"$names"; then
+  die "unexpected paths in the release"
+fi
+mkdir "$tmp/r"
+tar -xzf "$tmp/release.tgz" -C "$tmp/r" --no-same-owner --no-same-permissions
+for f in dist/version.txt dist/404.html dist/docs/index.html dist/en/docs/index.html dist/en/404/index.html; do
+  [[ -f $tmp/r/$f ]] || die "missing $f"
+done
+[[ $(cat "$tmp/r/dist/version.txt") == "$sha" ]] || die "dist/version.txt is not $sha"
+chown -R root:root "$tmp/r"
+chmod -R u=rwX,go=rX "$tmp/r"
+
+rm -rf "${RELEASES:?}/$sha"
+mv "$tmp/r" "$RELEASES/$sha"
+activate "$sha" "$previous" || { rm -rf "${RELEASES:?}/$sha"; exit 1; }
+
+live=$(basename "$(readlink -f "$ROOT/current")")
+ls -1t "$RELEASES" | grep -E '^[0-9a-f]{40}$' | tail -n +6 | while read -r old; do
+  [[ $old == "$live" ]] || rm -rf "${RELEASES:?}/$old"
+done
