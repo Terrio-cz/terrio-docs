@@ -4,18 +4,26 @@ Build and hosting of the Terrio developer docs and changelog at **https://docs.t
 
 The content is not here: it lives in `docs-site/` of [`Terrio-cz/importer`](https://github.com/Terrio-cz/importer), next to
 the code and the OpenAPI contract it documents, and the changelog is generated from the importer's history and release
-tags (importer `docs/README.md`). This repository pins which importer commit is live (`IMPORTER_SHA`), builds it and
+tags (importer `docs/README.md`). This repository pins which importer commit is live (`IMPORTER_SHA`, plus the release tags
+it contains in `IMPORTER_TAGS`), builds it and
 deploys it to the Terrio OVH VPS (`<vps-host>`), which also runs the importer's CI runner and `terrio.cz` (TER-671,
 `deploy/README.md` of `Terrio-cz/terrio-frontend-pre`: firewall, Cloudflare, `ci.slice`).
 
 ## How a release goes live
 
-1. A push to the importer's `master` runs its `.github/workflows/docs-trigger.yml`, which commits the new sha into
-   `IMPORTER_SHA` here (`main`), with the `DOCS_REPO_KEY` deploy key (write access to this repository only).
+1. A push to the importer's `master` or a `release/*` tag runs its `.github/workflows/docs-trigger.yml`. It compares master
+   with the pin here, not with the pushed range, so a cancelled run loses nothing: when an input of the site changed since
+   the pinned commit (`docs-site/`, `docs/openapi/`, `docs/api-changes/`, `design-tokens/`, the oasdiff pin or severity
+   list, a `Public-Change*` trailer) or the release tags differ, it commits the master sha and tags here (`main`) with the
+   `DOCS_REPO_KEY` deploy key (write access to this repository only). The pin never moves back; most merges change
+   nothing in the site and deploy nothing. A manual run of the trigger pins master unconditionally.
 2. That push runs `.github/workflows/deploy.yml` (also by hand, `main` only) on a GitHub-hosted runner: checkout of the
-   importer at exactly that sha with full history (`IMPORTER_READ_KEY`, a read-only deploy key of the importer), `npm ci`,
+   importer at exactly that sha with full history (`IMPORTER_READ_KEY`, a read-only deploy key of the importer), a check
+   that the sha is on importer `master` (whoever pushed the pin), `npm ci`,
    `npm run changelog:collect`, `npm run check` (the same build and checks as the importer's `docs-site.yml`), then
-   `dist/version.txt` = the sha, `tar czf` of `dist/` piped to `docs-deploy@<vps-host>` with the sha as the only argument.
+   `dist/version.txt` = this repository's commit (the release name: a new tag can change the site without a new importer
+   commit), `dist/importer.txt` = the importer sha, `tar czf` of `dist/` piped to `docs-deploy@<vps-host>` with that
+   commit as the only argument.
 3. The VPS key (`VPS_DEPLOY_KEY` secret, host keys in the `VPS_KNOWN_HOSTS` variable) is `restrict`ed to
    `terrio-docs-deploy-entry`, which accepts only a 40-hex sha and calls `sudo terrio-docs-deploy` (the only sudo rule of
    the `docs-deploy` user, `/etc/sudoers.d/terrio-docs-deploy`). The `docs-deploy` user is separate from the landing page's
@@ -58,14 +66,15 @@ ssh ubuntu@<vps-host> 'sudo install -m 644 /tmp/docs.caddy /etc/caddy/sites/ && 
 
 ## Rollback
 
-Revert the `IMPORTER_SHA` bump on `main` (the deploy runs again for the older sha), or at once on the VPS:
+Revert the pin commit on `main` (the deploy builds the older importer commit; the trigger moves the pin forward again only
+when the site changes after it), or at once on the VPS:
 
 ```bash
 ssh ubuntu@<vps-host> 'ls -1t /srv/terrio-docs/releases'
 ssh ubuntu@<vps-host> 'sudo terrio-docs-deploy --rollback <sha>'
 ```
 
-The next importer merge deploys again.
+The next pin deploys again.
 
 ## Keys
 
@@ -84,5 +93,5 @@ docs. Keep both to the same trusted team.
 
 ```bash
 ssh ubuntu@<vps-host> 'readlink /srv/terrio-docs/current; curl -s http://127.0.0.1:8791/version.txt'
-curl -s https://docs.terrio.cz/version.txt
+curl -s https://docs.terrio.cz/version.txt https://docs.terrio.cz/importer.txt
 ```

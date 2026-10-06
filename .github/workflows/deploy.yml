@@ -1,9 +1,10 @@
 name: Deploy
 
 # Builds docs-site/ of Terrio-cz/importer at the commit pinned in IMPORTER_SHA and hands it to the VPS behind
-# docs.terrio.cz (README.md). The importer bumps IMPORTER_SHA on every push to its master (workflow docs-trigger.yml),
-# so every landed merge, and the changelog it changes, goes live. The VPS deploy key can only run terrio-docs-deploy with
-# that sha; the VPS keeps the release only when Caddy serves it, else switches back.
+# docs.terrio.cz (README.md). The importer's docs-trigger.yml moves the pin when a master push changes the site or adds a
+# release tag. A release is named by this repository's commit, so a new pin always deploys (a tag can change the site
+# without a new importer commit). The VPS deploy key can only run terrio-docs-deploy with that sha; the VPS keeps the
+# release only when Caddy serves it, else switches back.
 on:
   push:
     branches: [main]
@@ -44,6 +45,12 @@ jobs:
           # The changelog is generated from release tags and the whole history (importer docs/README.md, Changelog).
           fetch-depth: 0
 
+      # Only importer master goes live, whoever pushed the pin.
+      - name: Check the pin is on importer master
+        env:
+          SHA: ${{ steps.pin.outputs.sha }}
+        run: git -C importer merge-base --is-ancestor "$SHA" origin/master
+
       - uses: actions/setup-node@v6
         with:
           node-version-file: importer/docs-site/.nvmrc
@@ -61,16 +68,16 @@ jobs:
       - name: Pack the release
         working-directory: importer/docs-site
         env:
-          SHA: ${{ steps.pin.outputs.sha }}
+          IMPORTER: ${{ steps.pin.outputs.sha }}
         run: |
-          echo "$SHA" > dist/version.txt
+          echo "$GITHUB_SHA" > dist/version.txt
+          echo "$IMPORTER" > dist/importer.txt
           tar czf "$RUNNER_TEMP/docs-release.tgz" dist
 
       - name: Ship to the VPS
         env:
           DEPLOY_KEY: ${{ secrets.VPS_DEPLOY_KEY }}
           KNOWN_HOSTS: ${{ vars.VPS_KNOWN_HOSTS }}
-          SHA: ${{ steps.pin.outputs.sha }}
         run: |
           key="$RUNNER_TEMP/vps_deploy_key"
           trap 'rm -f "$key" "$RUNNER_TEMP/known_hosts" "$RUNNER_TEMP/docs-release.tgz"' EXIT
@@ -78,14 +85,12 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" > "$RUNNER_TEMP/known_hosts"
           ssh -i "$key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes \
             -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts" \
-            docs-deploy@<vps-host> "$SHA" < "$RUNNER_TEMP/docs-release.tgz"
+            docs-deploy@<vps-host> "$GITHUB_SHA" < "$RUNNER_TEMP/docs-release.tgz"
 
       - name: Check docs.terrio.cz
-        env:
-          SHA: ${{ steps.pin.outputs.sha }}
         run: |
           for i in $(seq 1 10); do
-            [[ $(curl -fsS "https://docs.terrio.cz/version.txt?run=$GITHUB_RUN_ID-$i" || true) == "$SHA" ]] && exit 0
+            [[ $(curl -fsS "https://docs.terrio.cz/version.txt?run=$GITHUB_RUN_ID-$i" || true) == "$GITHUB_SHA" ]] && exit 0
             sleep 3
           done
-          echo "docs.terrio.cz does not serve $SHA" >&2; exit 1
+          echo "docs.terrio.cz does not serve $GITHUB_SHA" >&2; exit 1
