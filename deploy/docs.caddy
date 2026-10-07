@@ -27,10 +27,9 @@
 	# Read by the deploy checks; never cached by Cloudflare.
 	header /version.txt Cache-Control "no-store"
 
-	# The site title and the shared navigation (/#data, /#cenik, ...) point at the website root, which terrio.cz owns;
-	# the landing page has no English version yet.
-	redir / https://terrio.cz/ 302
-	redir /en/ https://terrio.cz/ 302
+	# The docs host opens on the docs home; the logo and navigation link to https://terrio.cz absolutely.
+	redir / /docs/ 302
+	redir /en/ /en/docs/ 302
 	# Relative Location, so scheme and host stay the proxy's.
 	redir /docs /docs/ 301
 	redir /en/docs /en/docs/ 301

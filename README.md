@@ -60,8 +60,8 @@ ssh ubuntu@<vps-host> 'sudo install -m 644 /tmp/docs.caddy /etc/caddy/sites/ && 
   with the Czech or (below `/en/`) English 404 page, existing `/_astro/*` files cached for a year (`immutable`; a 404 there
   is not cached), `/version.txt` `no-store`, everything else `no-cache` (so Cloudflare adds no TTL of its own), gzip/zstd, `nosniff`, `Referrer-Policy`, `X-Frame-Options: DENY`,
   `Permissions-Policy` on every response, 404 pages included.
-- `/` and `/en/` 302 to `https://terrio.cz/`: the site title and the shared navigation (`/#data`, `/#cenik`, ...) point
-  at the website root, which the landing page owns; the landing page has no English version yet.
+- `/` and `/en/` 302 to `/docs/` and `/en/docs/` (relative `Location`): the docs host opens on the docs home; the logo and
+  the navigation link to `https://terrio.cz` absolutely.
 - Cloudflare zone setting: Browser Cache TTL must respect the origin (a Cache Rule for `docs.terrio.cz`: Browser TTL
   "Respect origin"); with the zone default it raises `no-cache` on static extensions (`.js`, `.css`, 404s of them, the
   `/pagefind/` index) to 4 hours.
