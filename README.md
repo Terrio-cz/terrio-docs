@@ -100,8 +100,10 @@ runner side in the importer's `tools/ci-vps/README.md`):
 - `/srv/terrio-docs` is `root:terrio-docs` 0750; only Caddy is in the `terrio-docs` group. Releases are root-owned.
 - The `docs-deploy` user can only `sudo terrio-docs-deploy`; the landing page's `deploy` user cannot run it, and
   `docs-deploy` cannot run `terrio-web-deploy`. The docs site holds no secrets on the VPS.
-- The CI runner user cannot list or change `/srv/terrio-docs` and cannot reach the loopback health listener `8791`
-  (nft table `terrio_tenant`) or Caddy's admin API (unix socket `/run/caddy/admin.sock`, caddy and root only).
+- The CI runner user cannot list or change `/srv/terrio-docs`, cannot reach the loopback health listener `8791` (nft
+  table `terrio_tenant`, also for its subordinate uids) nor bind that port (`SocketBindDeny` on `ci.slice`, so it
+  cannot answer the deploy health check in Caddy's place), and cannot reach Caddy's admin API (unix socket
+  `/run/caddy/admin.sock`, caddy and root only).
 
 Setting up the docs tenant (once):
 
