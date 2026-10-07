@@ -74,7 +74,7 @@ importer master push moves the pin forward again, because the trigger compares m
 fix master first.
 
 ```bash
-ssh ubuntu@<vps-host> 'ls -1t /srv/terrio-docs/releases'
+ssh ubuntu@<vps-host> 'sudo ls -1t /srv/terrio-docs/releases'
 ssh ubuntu@<vps-host> 'sudo terrio-docs-deploy --rollback <sha>'
 ```
 
@@ -89,11 +89,31 @@ All three are ed25519 keys without a local copy; replace one by generating a new
 | `DOCS_REPO_KEY` | `Terrio-cz/importer` | deploy key with write access of this repository |
 
 Trust boundary: write access to the importer can push here, and write access here can read the importer and replace the
-docs. Keep both to the same trusted team.
+docs. Keep both to the same trusted team. The importer's `docs-trigger.yml`, which holds `DOCS_REPO_KEY`, runs on a
+GitHub-hosted runner, never on the shared self-hosted VPS runner (TER-674).
+
+## Tenant on the VPS
+
+The VPS separates its three tenants (TER-674; table and setup in `deploy/README.md` of `Terrio-cz/terrio-frontend-pre`,
+runner side in the importer's `tools/ci-vps/README.md`):
+
+- `/srv/terrio-docs` is `root:terrio-docs` 0750; only Caddy is in the `terrio-docs` group. Releases are root-owned.
+- The `docs-deploy` user can only `sudo terrio-docs-deploy`; the landing page's `deploy` user cannot run it, and
+  `docs-deploy` cannot run `terrio-web-deploy`. The docs site holds no secrets on the VPS.
+- The CI runner user cannot list or change `/srv/terrio-docs` and cannot reach the loopback health listener `8791`
+  (nft table `terrio_tenant`) or Caddy's admin API (unix socket `/run/caddy/admin.sock`, caddy and root only).
+
+Setting up the docs tenant (once):
+
+```bash
+sudo groupadd -r terrio-docs && sudo usermod -aG terrio-docs caddy
+sudo chgrp terrio-docs /srv/terrio-docs && sudo chmod 0750 /srv/terrio-docs
+sudo systemctl restart caddy
+```
 
 ## Checks
 
 ```bash
-ssh ubuntu@<vps-host> 'readlink /srv/terrio-docs/current; curl -s http://127.0.0.1:8791/version.txt'
+ssh ubuntu@<vps-host> 'sudo readlink /srv/terrio-docs/current; curl -s http://127.0.0.1:8791/version.txt'
 curl -s https://docs.terrio.cz/version.txt https://docs.terrio.cz/importer.txt
 ```
