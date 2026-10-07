@@ -7,7 +7,7 @@ the code and the OpenAPI contract it documents, and the changelog is generated f
 tags (importer `docs/README.md`). This repository pins which importer commit is live (`IMPORTER_SHA`, plus the release tags
 it contains in `IMPORTER_TAGS`), builds it and
 deploys it to the Terrio OVH VPS (`<vps-host>`), which also runs the importer's CI runner and `terrio.cz` (TER-671,
-`deploy/README.md` of `Terrio-cz/terrio-frontend-pre`: firewall, Cloudflare, `ci.slice`).
+`deploy/README.md` of `Terrio-cz/terrio-frontend-pre`: firewall, Cloudflare, the CI limits).
 
 ## How a release goes live
 
@@ -101,7 +101,7 @@ runner side in the importer's `tools/ci-vps/README.md`):
 - The `docs-deploy` user can only `sudo terrio-docs-deploy`; the landing page's `deploy` user cannot run it, and
   `docs-deploy` cannot run `terrio-web-deploy`. The docs site holds no secrets on the VPS.
 - The CI runner user cannot list or change `/srv/terrio-docs`, cannot reach the loopback health listener `8791` (nft
-  table `terrio_tenant`, also for its subordinate uids) nor bind that port (`SocketBindDeny` on `ci.slice`, so it
+  table `terrio_tenant`, also for its subordinate uids) nor bind that port (`SocketBindDeny` on the CI cgroup `user-1001.slice`, so it
   cannot answer the deploy health check in Caddy's place), and cannot reach Caddy's admin API (unix socket
   `/run/caddy/admin.sock`, caddy and root only).
 
